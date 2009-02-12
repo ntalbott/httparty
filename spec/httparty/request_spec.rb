@@ -1,6 +1,20 @@
 require File.join(File.dirname(__FILE__), '..', 'spec_helper')
 
 describe HTTParty::Request do
+  def stub_response(body, code = 200)
+    unless @http
+      @http = Net::HTTP.new('localhost', 80)
+      @request.stub!(:http).and_return(@http)
+      @request.stub!(:uri).and_return(URI.parse("http://foo.com/foobar"))
+    end
+
+    response = Net::HTTPResponse::CODE_TO_OBJ[code.to_s].new("1.1", code, body)
+    response.stub!(:body).and_return(body)
+
+    @http.stub!(:request).and_return(response)
+    response
+  end
+
   before do
     @request = HTTParty::Request.new(Net::HTTP::Get, 'http://api.foo.com/v1', :format => :xml)
   end
@@ -13,11 +27,57 @@ describe HTTParty::Request do
 
   describe 'http' do
     it "should use ssl for port 443" do
-      @request.send(:http, URI.parse('https://api.foo.com/v1:443')).use_ssl?.should == true
+      request = HTTParty::Request.new(Net::HTTP::Get, 'https://api.foo.com/v1:443')
+      request.send(:http).use_ssl?.should == true
     end
     
     it 'should not use ssl for port 80' do
-      @request.send(:http, URI.parse('http://foobar.com')).use_ssl?.should == false
+      request = HTTParty::Request.new(Net::HTTP::Get, 'http://foobar.com')
+      @request.send(:http).use_ssl?.should == false
+    end
+
+    it "should use basic auth when configured" do
+      @request.options[:basic_auth] = {:username => 'foobar', :password => 'secret'}
+      @request.send(:setup_raw_request)
+      @request.instance_variable_get(:@raw_request)['authorization'].should_not be_nil
+    end
+  end
+  
+  describe '#format_from_mimetype' do
+    it 'should handle text/xml' do
+      ["text/xml", "text/xml; charset=iso8859-1"].each do |ct|
+        @request.send(:format_from_mimetype, ct).should == :xml
+      end
+    end
+
+    it 'should handle application/xml' do
+      ["application/xml", "application/xml; charset=iso8859-1"].each do |ct|
+        @request.send(:format_from_mimetype, ct).should == :xml
+      end
+    end
+
+    it 'should handle text/json' do
+      ["text/json", "text/json; charset=iso8859-1"].each do |ct|
+        @request.send(:format_from_mimetype, ct).should == :json
+      end
+    end
+
+    it 'should handle application/json' do
+      ["application/json", "application/json; charset=iso8859-1"].each do |ct|
+        @request.send(:format_from_mimetype, ct).should == :json
+      end
+    end
+
+    it 'should handle text/javascript' do
+      ["text/javascript", "text/javascript; charset=iso8859-1"].each do |ct|
+        @request.send(:format_from_mimetype, ct).should == :json
+      end
+    end
+
+    it 'should handle application/javascript' do
+      ["application/javascript", "application/javascript; charset=iso8859-1"].each do |ct|
+        @request.send(:format_from_mimetype, ct).should == :json
+      end
     end
   end
 
@@ -33,95 +93,96 @@ describe HTTParty::Request do
       @request.options[:format] = :json
       @request.send(:parse_response, json).should == {'books' => {'book' => {'id' => '1234', 'name' => 'Foo Bar!'}}}
     end
+
+    it 'should handle yaml automatically' do
+      yaml = "books: \n  book: \n    name: Foo Bar!\n    id: \"1234\"\n"
+      @request.options[:format] = :yaml
+      @request.send(:parse_response, yaml).should == {'books' => {'book' => {'id' => '1234', 'name' => 'Foo Bar!'}}}
+    end
+
+    it "should include any HTTP headers in the returned response" do
+      @request.options[:format] = :html
+      response = stub_response "Content"
+      response.initialize_http_header("key" => "value")
+
+      @request.perform.headers.should == { "key" => ["value"] }
+    end
+    
+    describe 'with non-200 responses' do
+
+      it 'should return a valid object for 4xx response' do
+        stub_response '<foo><bar>yes</bar></foo>', 401
+        resp = @request.perform
+        resp.code.should == 401
+        resp.body.should == "<foo><bar>yes</bar></foo>"
+        resp['foo']['bar'].should == "yes"
+      end
+
+      it 'should return a valid object for 5xx response' do
+        stub_response '<foo><bar>error</bar></foo>', 500
+        resp = @request.perform
+        resp.code.should == 500
+        resp.body.should == "<foo><bar>error</bar></foo>"
+        resp['foo']['bar'].should == "error"
+      end
+
+    end
   end
 
   it "should not attempt to parse empty responses" do
-    http = Net::HTTP.new('localhost', 80)
-    @request.stub!(:http).and_return(http)
-    response = Net::HTTPNoContent.new("1.1", 204, "No content for you")
-    response.stub!(:body).and_return(nil)
-    http.stub!(:request).and_return(response)
+    stub_response "", 204
 
     @request.options[:format] = :xml
-    @request.perform.should be_nil
-
-    response.stub!(:body).and_return("")
     @request.perform.should be_nil
   end
   
   it "should not fail for missing mime type" do
-    http = Net::HTTP.new('localhost', 80)
-    @request.stub!(:http).and_return(http)
-    
-    response = Net::HTTPOK.new("1.1", 200, "Content for you")
-    response.stub!(:[]).with('content-type').and_return(nil)
-    response.stub!(:body).and_return('Content for you')
-    
-    http.stub!(:request).and_return(response)
-    
+    stub_response "Content for you"
     @request.options[:format] = :html
     @request.perform.should == 'Content for you'
   end
 
-  describe "that respond with redirects" do
-    def setup_redirect
-      @http = Net::HTTP.new('localhost', 80)
-      @request.stub!(:http).and_return(@http)
-      @request.stub!(:uri).and_return(URI.parse("http://foo.com/foobar"))
-      @redirect = Net::HTTPFound.new("1.1", 302, "")
+  describe "a request that redirects" do
+    before(:each) do
+      @redirect = stub_response("", 302)
       @redirect['location'] = '/foo'
+
+      @ok = stub_response('<hash><foo>bar</foo></hash>', 200)
     end
 
-    def setup_ok_response
-      @ok = Net::HTTPOK.new("1.1", 200, "Content for you")
-      @ok.stub!(:body).and_return('<hash><foo>bar</foo></hash>')
-      @http.should_receive(:request).and_return(@redirect, @ok)
-      @request.options[:format] = :xml
+    describe "once" do
+      before(:each) do
+        @http.stub!(:request).and_return(@redirect, @ok)
+      end
+
+      it "should be handled by GET transparently" do
+        @request.perform.should == {"hash" => {"foo" => "bar"}}
+      end
+
+      it "should be handled by POST transparently" do
+        @request.http_method = Net::HTTP::Post
+        @request.perform.should == {"hash" => {"foo" => "bar"}}
+      end
+
+      it "should be handled by DELETE transparently" do
+        @request.http_method = Net::HTTP::Delete
+        @request.perform.should == {"hash" => {"foo" => "bar"}}
+      end
+
+      it "should be handled by PUT transparently" do
+        @request.http_method = Net::HTTP::Put
+        @request.perform.should == {"hash" => {"foo" => "bar"}}
+      end
     end
 
-    def setup_redirect_response
-      @http.stub!(:request).and_return(@redirect)
-    end
+    describe "infinitely" do
+      before(:each) do
+        @http.stub!(:request).and_return(@redirect)
+      end
 
-    def setup_successful_redirect
-      setup_redirect
-      setup_ok_response
-    end
-
-    def setup_infinite_redirect
-      setup_redirect
-      setup_redirect_response
-    end
-
-    it "should handle redirects for GET transparently" do
-      setup_successful_redirect
-      @request.perform.should == {"hash" => {"foo" => "bar"}}
-    end
-
-    it "should handle redirects for POST transparently" do
-      setup_successful_redirect
-      @request.http_method = Net::HTTP::Post
-      @request.perform.should == {"hash" => {"foo" => "bar"}}
-    end
-
-    it "should handle redirects for DELETE transparently" do
-      setup_successful_redirect
-      @request.http_method = Net::HTTP::Delete
-      @request.perform.should == {"hash" => {"foo" => "bar"}}
-    end
-
-    it "should handle redirects for PUT transparently" do
-      setup_successful_redirect
-      @request.http_method = Net::HTTP::Put
-      @request.perform.should == {"hash" => {"foo" => "bar"}}
-    end
-
-    it "should prevent infinite loops" do
-      setup_infinite_redirect
-
-      lambda do
-        @request.perform
-      end.should raise_error(HTTParty::RedirectionTooDeep)
+      it "should raise an exception" do
+        lambda { @request.perform }.should raise_error(HTTParty::RedirectionTooDeep)
+      end
     end
   end
 end

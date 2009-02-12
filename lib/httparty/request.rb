@@ -1,7 +1,7 @@
 require 'uri'
 
 module HTTParty
-  class Request    
+  class Request #:nodoc:
     SupportedHTTPMethods = [Net::HTTP::Get, Net::HTTP::Post, Net::HTTP::Put, Net::HTTP::Delete]
     
     attr_accessor :http_method, :path, :options
@@ -20,9 +20,14 @@ module HTTParty
     end
     
     def uri
-      uri = path.relative? ? URI.parse("#{options[:base_uri]}#{path}") : path
-      uri.query = query_string(uri)
-      uri
+      new_uri = path.relative? ? URI.parse("#{options[:base_uri]}#{path}") : path
+      
+      # avoid double query string on redirects [#12]
+      unless @redirect
+        new_uri.query = query_string(new_uri)
+      end
+      
+      new_uri
     end
     
     def format
@@ -30,38 +35,47 @@ module HTTParty
     end
     
     def perform
-      validate!
-      handle_response!(get_response(uri))
+      validate
+      setup_raw_request
+      handle_response(get_response)
     end
 
     private
-      def http(uri) #:nodoc:
+      def http
         http = Net::HTTP.new(uri.host, uri.port, options[:http_proxyaddr], options[:http_proxyport])
         http.use_ssl = (uri.port == 443)
         http.verify_mode = OpenSSL::SSL::VERIFY_NONE
         http
       end
-      
-      def get_response(uri) #:nodoc:
-        request = http_method.new(uri.request_uri)   
+
+      def configure_basic_auth
+        @raw_request.basic_auth(options[:basic_auth][:username], options[:basic_auth][:password])
+      end
+
+      def setup_raw_request
+        @raw_request = http_method.new(uri.request_uri)
         
         if post? && options[:query]
-          request.set_form_data(options[:query])
+          @raw_request.set_form_data(options[:query])
         end
         
-        request.body = options[:body].is_a?(Hash) ? options[:body].to_params : options[:body] unless options[:body].blank?
-        request.initialize_http_header options[:headers]
+        @raw_request.body = options[:body].is_a?(Hash) ? options[:body].to_params : options[:body] unless options[:body].blank?
+        @raw_request.initialize_http_header options[:headers]
         
-        if options[:basic_auth]
-          request.basic_auth(options[:basic_auth][:username], options[:basic_auth][:password])
-        end
-        
-        response = http(uri).request(request)
+        configure_basic_auth if options[:basic_auth]
+      end
+
+      def perform_actual_request
+        http.request(@raw_request)
+      end
+
+      def get_response
+        response = perform_actual_request
         options[:format] ||= format_from_mimetype(response['content-type'])
         response
       end
       
-      def query_string(uri) #:nodoc:
+      def query_string(uri)
         query_string_parts = []
         query_string_parts << uri.query unless uri.query.blank?
 
@@ -76,41 +90,41 @@ module HTTParty
       end
       
       # Raises exception Net::XXX (http error code) if an http error occured
-      def handle_response!(response) #:nodoc:
+      def handle_response(response)
         case response
-        when Net::HTTPSuccess
-          parse_response(response.body)
-        when Net::HTTPRedirection
-          options[:limit] -= 1
-          self.path = response['location']
-          perform
-        else
-          response.instance_eval { class << self; attr_accessor :body_parsed; end }
-          begin; response.body_parsed = parse_response(response.body); rescue; end
-          response.error! # raises  exception corresponding to http error Net::XXX
-        end
+          when Net::HTTPRedirection
+            options[:limit] -= 1
+            self.path = response['location']
+            @redirect = true
+            perform
+          else
+            parsed_response = parse_response(response.body)
+            Response.new(parsed_response, response.body, response.code, response.to_hash)
+          end
       end
       
-      def parse_response(body) #:nodoc:
+      def parse_response(body)
         return nil if body.nil? or body.empty?
         case format
-        when :xml
-          ToHashParser.from_xml(body)
-        when :json
-          JSON.parse(body)
-        else
-          body
-        end
+          when :xml
+            HTTParty::Parsers::XML.parse(body)
+          when :json
+            HTTParty::Parsers::JSON.decode(body)
+          when :yaml
+            YAML::load(body)
+          else
+            body
+          end
       end
   
       # Uses the HTTP Content-Type header to determine the format of the response
       # It compares the MIME type returned to the types stored in the AllowedFormats hash
-      def format_from_mimetype(mimetype) #:nodoc:
+      def format_from_mimetype(mimetype)
         return nil if mimetype.nil?
-        AllowedFormats.each { |k, v| return k if mimetype.include?(v) }
+        AllowedFormats.each { |k, v| return v if mimetype.include?(k) }
       end
       
-      def validate! #:nodoc:
+      def validate
         raise HTTParty::RedirectionTooDeep, 'HTTP redirects too deep' if options[:limit].to_i <= 0
         raise ArgumentError, 'only get, post, put and delete methods are supported' unless SupportedHTTPMethods.include?(http_method)
         raise ArgumentError, ':headers must be a hash' if options[:headers] && !options[:headers].is_a?(Hash)
