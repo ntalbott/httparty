@@ -442,4 +442,13 @@ describe HTTParty::Parsers::XML, "#parse" do
 
     HTTParty::Parsers::XML.parse(xml_string)['person'].should == expected_hash
   end
+  
+  it "should handle an empty xml string" do
+    HTTParty::Parsers::XML.parse('').should == {}
+  end
+  
+  # As returned in the response body by the unfuddle XML API when creating objects
+  it "should handle an xml string containing a single space" do
+    HTTParty::Parsers::XML.parse(' ').should == {}
+  end
 end
