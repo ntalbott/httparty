@@ -136,6 +136,13 @@ describe HTTParty::Request do
     @request.perform.should be_nil
   end
   
+  it "should not attempt to parse pure-whitespace responses" do
+    stub_response " ", 204
+
+    @request.options[:format] = :xml
+    @request.perform.should be_nil
+  end
+  
   it "should not fail for missing mime type" do
     stub_response "Content for you"
     @request.options[:format] = :html

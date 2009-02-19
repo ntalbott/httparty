@@ -104,7 +104,7 @@ module HTTParty
       end
       
       def parse_response(body)
-        return nil if body.nil? or body.empty?
+        return nil if body.nil? or body.strip.empty?
         case format
           when :xml
             HTTParty::Parsers::XML.parse(body)
