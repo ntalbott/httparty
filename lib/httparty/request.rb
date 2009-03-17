@@ -23,7 +23,7 @@ module HTTParty
       new_uri = path.relative? ? URI.parse("#{options[:base_uri]}#{path}") : path
       
       # avoid double query string on redirects [#12]
-      unless @redirect
+      unless @redirect || post?
         new_uri.query = query_string(new_uri)
       end
       
