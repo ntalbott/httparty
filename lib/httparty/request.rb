@@ -1,8 +1,11 @@
 require 'uri'
+require 'httparty/logging'
 
 module HTTParty
   class Request #:nodoc:
     SupportedHTTPMethods = [Net::HTTP::Get, Net::HTTP::Post, Net::HTTP::Put, Net::HTTP::Delete]
+    
+    include Logging
     
     attr_accessor :http_method, :path, :options
     
@@ -66,6 +69,20 @@ module HTTParty
       end
 
       def perform_actual_request
+        record_log do |record|
+          record << "REQUEST"
+          record << "  #{@raw_request.method} #{http.use_ssl ? "https" : "http"}://#{http.address}#{@raw_request.path}"
+          unless @raw_request.to_hash.empty?
+            record << "  HEADERS"
+            @raw_request.each_header do |header, value|
+              record << "    #{header}: #{value}"
+            end
+          end
+          if @raw_request.body && !@raw_request.body.empty?
+            record << "  BODY"
+            record << "    #{@raw_request.body.split("\n").join("\n    ")}"
+          end
+        end
         http.request(@raw_request)
       end
 
@@ -93,11 +110,22 @@ module HTTParty
       def handle_response(response)
         case response
           when Net::HTTPRedirection
+            record_log{|record| record << "-> REDIRECT to #{response['location']}"}
             options[:limit] -= 1
             self.path = response['location']
             @redirect = true
             perform
           else
+            record_log do |record|
+              record << "RESPONSE"
+              record << "  CODE: #{response.code}"
+              record << "  HEADERS"
+              response.each do |header, value|
+                record << "    #{header}: #{value}"
+              end
+              record << "  BODY"
+              record << "    #{response.body.split("\n").join("\n    ")}"
+            end
             parsed_response = parse_response(response.body)
             Response.new(parsed_response, response.body, response.code, response.to_hash)
           end
