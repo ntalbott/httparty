@@ -152,25 +152,38 @@ class BlankSlate #:nodoc:
   instance_methods.each { |m| undef_method m unless m =~ /^__/ }
 end
 
-# 1.8.6 has mistyping of transitive in if statement
-require "rexml/document"
-module REXML #:nodoc:
-  class Document < Element #:nodoc:
-    undef :write
-    def write( output=$stdout, indent=-1, transitive=false, ie_hack=false )
-      if xml_decl.encoding != "UTF-8" && !output.kind_of?(Output)
-        output = Output.new( output, xml_decl.encoding )
-      end
-      formatter = if indent > -1
-          if transitive
-            REXML::Formatters::Transitive.new( indent, ie_hack )
-          else
-            REXML::Formatters::Pretty.new( indent, ie_hack )
-          end
-        else
-          REXML::Formatters::Default.new( ie_hack )
+case RUBY_VERSION
+when '1.8.6'
+  # 1.8.6 has mistyping of transitive in if statement
+  require "rexml/document"
+  module REXML #:nodoc:
+    class Document < Element #:nodoc:
+      undef :write
+      def write( output=$stdout, indent=-1, transitive=false, ie_hack=false )
+        if xml_decl.encoding != "UTF-8" && !output.kind_of?(Output)
+          output = Output.new( output, xml_decl.encoding )
         end
-      formatter.write( self, output )
+        formatter = if indent > -1
+            if transitive
+              REXML::Formatters::Transitive.new( indent, ie_hack )
+            else
+              REXML::Formatters::Pretty.new( indent, ie_hack )
+            end
+          else
+            REXML::Formatters::Default.new( ie_hack )
+          end
+        formatter.write( self, output )
+      end
+    end
+  end
+  
+  # clean up "using default DH parameters" warning for https
+  require 'net/https'
+  class Net::HTTP
+    alias :old_use_ssl= :use_ssl=
+    def use_ssl= flag
+      self.old_use_ssl = flag
+      @ssl_context.tmp_dh_callback = proc {} if @ssl_context
     end
   end
 end
