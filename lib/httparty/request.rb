@@ -7,7 +7,8 @@ module HTTParty
     
     include Logging
     
-    attr_accessor :http_method, :path, :options
+    attr_accessor :http_method, :options
+    attr_reader :path
     
     def initialize(http_method, path, o={})
       self.http_method = http_method
@@ -16,6 +17,7 @@ module HTTParty
         :limit => o.delete(:no_follow) ? 0 : 5, 
         :default_params => {},
       }.merge(o)
+      @redirect = false
     end
 
     def path=(uri)

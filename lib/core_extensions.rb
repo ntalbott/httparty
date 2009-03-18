@@ -156,6 +156,7 @@ end
 require "rexml/document"
 module REXML #:nodoc:
   class Document < Element #:nodoc:
+    undef :write
     def write( output=$stdout, indent=-1, transitive=false, ie_hack=false )
       if xml_decl.encoding != "UTF-8" && !output.kind_of?(Output)
         output = Output.new( output, xml_decl.encoding )
