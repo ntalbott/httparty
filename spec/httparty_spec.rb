@@ -210,7 +210,7 @@ describe HTTParty do
       HTTParty.get('http://www.google.com').should == file_fixture('google.html')
     end
     
-    it "should be able parse response type json automatically" do
+    it "should be able to parse response type json automatically" do
       stub_http_response_with('twitter.json')
       tweets = HTTParty.get('http://twitter.com/statuses/public_timeline.json')
       tweets.size.should == 20
@@ -227,7 +227,7 @@ describe HTTParty do
       }
     end
     
-    it "should be able parse response type xml automatically" do
+    it "should be able to parse response type xml automatically" do
       stub_http_response_with('twitter.xml')
       tweets = HTTParty.get('http://twitter.com/statuses/public_timeline.xml')
       tweets['statuses'].size.should == 20
