@@ -1,3 +1,5 @@
+require File.expand_path(File.dirname(__FILE__) + '/spec_helper')
+
 describe String, "#snake_case" do
   it "lowercases one word CamelCase" do
     "Merb".snake_case.should == "merb"

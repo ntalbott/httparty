@@ -1,10 +1,10 @@
 require 'rubygems'
 gem 'rspec'
 require 'spec'
-require File.join(File.dirname(__FILE__), '..', 'lib', 'httparty')
+require File.expand_path(File.dirname(__FILE__) + '/../lib/httparty')
 
 def file_fixture(filename)
-  open(File.join(File.dirname(__FILE__), 'fixtures', "#{filename.to_s}")).read
+  open(File.dirname(__FILE__) + "/fixtures/#{filename.to_s}").read
 end
 
 def stub_http_response_with(filename)
